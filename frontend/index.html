@@ -1,0 +1,119 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bearing Condition Monitor</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@400&display=swap" rel="stylesheet">
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+:root{--bg:#e9edf0;--ink:#18222d;--mut:#5b6875;--line:#c5cdd5;--card:#f8fafb;--side:#1c2733;--acc:#1f5fbf;--ok:#2e7d4f;--warn:#b7791f;--bad:#b83a2e}
+*{box-sizing:border-box}body{margin:0;font:14px/1.5 'IBM Plex Sans',system-ui,sans-serif;background:var(--bg);color:var(--ink);display:flex;min-height:100vh}
+nav{width:210px;background:var(--side);padding:14px 0;flex-shrink:0;position:sticky;top:0;height:100vh;overflow:auto}
+nav b{display:block;color:#fff;padding:0 16px 12px;font-size:15px}
+nav a{display:block;color:#aab6c3;padding:7px 16px;text-decoration:none;border-left:3px solid transparent}
+nav a.on,nav a:hover{color:#fff;background:#26354a;border-left-color:#5aa0ff}
+main{flex:1;min-width:0;padding:18px 22px}
+.top{display:flex;justify-content:space-between;gap:10px;color:var(--mut);margin-bottom:12px;flex-wrap:wrap}
+h1{font-size:22px;margin:0 0 4px}h3{font-size:13px;margin:0 0 8px;color:var(--mut);font-weight:600}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;margin-bottom:14px}
+.kpis{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.card{background:var(--card);border:1px solid var(--line);padding:12px 14px;border-radius:4px;min-width:0}
+.kpi{font:400 20px 'IBM Plex Mono',monospace}
+.ch{height:300px}.tall{height:380px}
+.badge{display:inline-block;padding:3px 12px;color:#fff;font-weight:600;border-radius:3px;font-size:18px}
+.HEALTHY{background:var(--ok)}.WARNING{background:var(--warn)}.FAULT{background:var(--bad)}
+.msg{padding:10px 12px;border-left:4px solid var(--warn);background:#fbf3e0;margin-bottom:14px}
+.msg.err{border-color:var(--bad);background:#f9e4e1}.msg.ok{border-color:var(--ok);background:#e3f2e9}
+table{border-collapse:collapse;width:100%;font-size:13px}th,td{padding:5px 8px;border-bottom:1px solid var(--line);text-align:right}
+th:first-child,td:first-child{text-align:left}.scroll{overflow-x:auto}
+form{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;align-items:end}
+label{font-size:12px;color:var(--mut);display:block}input,select{width:100%;padding:6px;border:1px solid var(--line);background:#fff;font:inherit}
+button,.btn{background:var(--acc);color:#fff;border:0;padding:8px 14px;font:inherit;cursor:pointer;text-decoration:none;display:inline-block;border-radius:3px}
+.flow{display:flex;flex-wrap:wrap;gap:6px;align-items:center}.flow span{background:#fff;border:1px solid var(--line);padding:5px 9px}
+pre{background:#fff;border:1px solid var(--line);padding:8px;max-height:220px;overflow:auto;font:12px 'IBM Plex Mono',monospace}
+@media(max-width:760px){body{display:block}nav{width:auto;height:auto;position:static;display:flex;overflow:auto;padding:0}nav b{display:none}nav a{white-space:nowrap;border-left:0;border-bottom:3px solid transparent}nav a.on{border-bottom-color:#5aa0ff}main{padding:12px}}
+</style></head><body>
+<nav id="nav"><b>Bearing Monitor</b></nav>
+<main><div class="top"><div id="crumb"></div><div id="srcinfo"></div></div><div id="msg"></div><div id="view"></div></main>
+<script src="./config.js"></script>
+<script>
+const $=s=>document.querySelector(s);
+let R=null,A=null,FILE=null,timer=null;
+const LAYOUT=(l={})=>({paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'rgba(0,0,0,0)',font:{color:'#18222d',size:11},margin:{t:20,l:55,r:15,b:42},...l});
+const pl=(id,d,l)=>Plotly.newPlot(id,d,LAYOUT(l),{responsive:true,displaylogo:false});
+const card=(t,b)=>`<div class="card"><h3>${t}</h3>${b}</div>`;
+const chart=(id,t,c='ch')=>card(t,`<div id="${id}" class="${c}"></div>`);
+const kpi=(t,v)=>card(t,`<div class="kpi">${v}</div>`);
+const f=(v,d=4)=>v==null?'—':(+v).toFixed(d);
+const say=(t,k='')=>$('#msg').innerHTML=t?`<div class="msg ${k}">${t}</div>`:'';
+const need=()=>A?'':'<div class="msg">No signal analysed yet. Go to <a href="#upload">Upload Signal</a> and analyse a vibration file.</div>';
+const COL=['#2e7d4f','#d99a1d','#b83a2e','#1f5fbf'];
+const API_BASE=String(window.BEARING_API_BASE||'').replace(/\/+$/,'');
+const apiUrl=u=>API_BASE+u;
+async function api(u,o){const r=await fetch(apiUrl(u),o);const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.detail||r.statusText);return j}
+async function loadR(){try{const j=await api('/api/model-comparison');R=j.models&&Object.keys(j.models).length?j:null}catch(e){R=null}}
+
+function form(){return `<form id="f"><div><label>Vibration file (.mat .csv .txt .npz)</label><input type="file" id="file" accept=".mat,.csv,.txt,.npz"></div>
+<div><label>Sampling freq (Hz)</label><input id="fs" type="number" value="12000"></div>
+<div><label>Low cutoff (Hz)</label><input id="low" type="number" value="10"></div>
+<div><label>High cutoff (Hz)</label><input id="high" type="number" value="5000"></div>
+<div><label>Filter order</label><input id="order" type="number" value="4"></div>
+<div><label>Window size</label><select id="window"><option>64</option><option>128</option><option>256</option><option>512</option><option>1024</option><option selected>2048</option><option>4096</option></select></div>
+<div><label>Overlap %</label><input id="overlap" type="number" value="50"></div>
+<div><button type="submit">Start Signal Analysis</button></div></form>`}
+function bindForm(){const fm=$('#f');if(!fm)return;
+ const p=A?A.params:null;if(A){fs.value=A.file.fs;low.value=p.low;high.value=p.high;order.value=p.order;window_.value=p.window}
+ fm.onsubmit=async e=>{e.preventDefault();const file=$('#file').files[0]||FILE;if(!file)return say('Choose a vibration file first.','err');FILE=file;
+  const d=new FormData();d.append('file',file);for(const k of['fs','low','high','order','window','overlap'])d.append(k,$('#'+k).value);
+  say('Analysing…');try{A=await api('/api/analyze',{method:'POST',body:d});const requested=Number(d.get('window'));say(`Analysed ${A.file.name}: ${A.params.windows} windows${A.params.window<requested?` (window adjusted to ${A.params.window} samples to fit the file)`:''}.`,'ok');
+  $('#srcinfo').textContent=A.file.name;if(location.hash!=='#preprocess')location.hash='#diagnosis';else route()}catch(err){say(err.message,'err')}}}
+Object.defineProperty(window,'window_',{get:()=>document.getElementById('window')});
+
+const sigPlot=(id,x,y,xt,yt,c='#1f5fbf')=>pl(id,[{x,y,type:'scattergl',mode:'lines',line:{color:c,width:1}}],{xaxis:{title:xt},yaxis:{title:yt}});
+const plots={
+ time:()=>pl('p_time',[{x:A.t,y:A.raw,name:'Raw',type:'scattergl',mode:'lines',line:{color:'#8a97a4',width:1}},{x:A.t,y:A.filtered,name:'Filtered',type:'scattergl',mode:'lines',line:{color:'#1f5fbf',width:1}}],{xaxis:{title:'Time (s)'},yaxis:{title:'Amplitude'},legend:{orientation:'h'}}),
+ fft:()=>sigPlot('p_fft',A.fft.f,A.fft.a,'Frequency (Hz)','Amplitude'),
+ env:()=>sigPlot('p_env',A.env.f,A.env.a,'Frequency (Hz)','Envelope amplitude','#b83a2e'),
+ spec:()=>pl('p_spec',[{x:A.spec.t,y:A.spec.f,z:A.spec.z,type:'heatmap',colorscale:'Viridis',colorbar:{title:'dB'}}],{xaxis:{title:'Time (s)'},yaxis:{title:'Frequency (Hz)'}}),
+ prob:()=>{const p=A.pred.probabilities;pl('p_prob',[{x:Object.keys(p),y:Object.values(p),type:'bar',marker:{color:COL}}],{yaxis:{range:[0,1],title:'Probability'}})},
+ rms:()=>sigPlot('p_rms',A.window_rms.map((_,i)=>i),A.window_rms,'Window #','RMS'),
+ acc:()=>metricBar('p_acc','accuracy'),
+ prf:()=>pl('p_prf',['precision','recall','f1','specificity'].map(k=>({name:k,type:'bar',x:Object.keys(R.models),y:Object.values(R.models).map(m=>m[k])})),{barmode:'group',legend:{orientation:'h'}})
+};
+function metricBar(id,k){const n=Object.keys(R.models);pl(id,[{x:n,y:n.map(m=>R.models[m][k]),type:'bar',marker:{color:n.map(m=>m===R.best_model?'#1f5fbf':'#9aa7b4')}}],{yaxis:{title:k}})}
+const status=()=>A&&A.pred.available?`<span class="badge ${A.pred.status}">${A.pred.status==='HEALTHY'?'HEALTHY':A.pred.status==='FAULT'?'FAULTY':'WARNING — low confidence'}</span>`:'<span class="msg">Prediction unavailable — model has not been trained.</span>';
+const kpis=()=>{const s=A.stats,p=A.pred;return `<div class="grid kpis">${kpi('Status',status())}${kpi('Detected condition',p.available?p.condition:'—')}${kpi('Best model',p.available?p.model:'—')}${kpi('Model test accuracy',p.available?f(p.model_test_accuracy):'—')}${kpi('Confidence',p.available?f(p.confidence):'—')}${kpi('RMS',f(s.rms))}${kpi('Kurtosis',f(s.kurtosis,2))}${kpi('Crest factor',f(s.crest_factor,2))}${kpi('Dominant freq',f(A.mean_features.dominant_freq,1)+' Hz')}${kpi('RPM',A.file.rpm?f(A.file.rpm,0):'n/a')}${kpi('Sampling',A.file.fs+' Hz')}</div>`};
+const recommend=()=>!A.pred.available?'':A.pred.status==='HEALTHY'?'No abnormality detected — continue monitoring.':A.pred.status==='FAULT'?'Fault pattern detected — inspect the bearing.':'Result is uncertain — inspect and continue monitoring.';
+
+function metricTable(){const k=['accuracy','precision','recall','specificity','f1','roc_auc','fpr','fnr','train_time','infer_time_per_window'];
+ return `<div class="scroll"><table><tr><th>Algorithm</th>${['Accuracy','Precision','Recall','Specificity','F1','ROC-AUC','FPR','FNR','Train (s)','Inference (s/window)'].map(h=>`<th>${h}</th>`).join('')}</tr>`+
+ Object.entries(R.models).map(([n,m])=>`<tr><td>${n}${n===R.best_model?' ★':''}</td>${k.map(x=>`<td>${f(m[x],x.includes('time')||x.includes('infer')?5:4)}</td>`).join('')}</tr>`).join('')+
+ R.unavailable.map(n=>`<tr><td>${n}</td><td colspan="10">Not trained / unavailable</td></tr>`).join('')+'</table></div>'}
+function cm(name){const m=R.models[name],c=R.classes;pl('p_cm',[{z:m.confusion,x:c,y:c,type:'heatmap',colorscale:'Blues',text:m.confusion.map(r=>r.map(String)),texttemplate:'%{text}',showscale:false}],{xaxis:{title:'Predicted'},yaxis:{title:'True',autorange:'reversed'}});
+ $('#cmtab').innerHTML='<table><tr><th>Class</th><th>TP</th><th>FP</th><th>TN</th><th>FN</th></tr>'+Object.entries(m.per_class).map(([k,v])=>`<tr><td>${k}</td><td>${v.TP}</td><td>${v.FP}</td><td>${v.TN}</td><td>${v.FN}</td></tr>`).join('')+`</table><p>Healthy-vs-faulty accuracy: <b>${f(m.healthy_vs_faulty_accuracy)}</b></p>`}
+const noR='<div class="msg">Reference training results are not loaded. Add labelled reference recordings and train from the <a href="#training">Model Training</a> page.</div>';
+const FLOW=['Vibration signal','DC removal','Detrending','Band-pass filtering','Segmentation (overlapping windows)','Feature extraction','Feature selection','ML models','Evaluation on unseen recordings','Healthy / Faulty diagnosis'];
+const flow=()=>`<div class="flow">${FLOW.map((s,i)=>(i?'→ ':'')+`<span>${s}</span>`).join(' ')}</div>`;
+const feat=n=>R.feature_names;
+
+const pages={
+ home:{t:'Home',h:()=>`<h1>AI-Based Motor &amp; Bearing Condition Monitoring</h1><p>Vibration signal analysis and bearing fault diagnosis. Upload a vibration recording for a model-based condition estimate. Benchmark metrics describe held-out reference recordings and may not predict performance on other equipment.</p><p><a class="btn" href="#upload">Start Analysis</a> <a class="btn" href="#dataset">Explore Training Data</a> <a class="btn" href="#method">View Methodology</a> <a class="btn" href="#compare">Model Performance</a></p>${card('Pipeline',flow())}`},
+ dash:{t:'Dashboard',h:()=>need()+(A?kpis()+`<div class="grid">${chart('p_time','Time signal')}${chart('p_fft','FFT spectrum')}${chart('p_env','Envelope spectrum')}${chart('p_spec','Spectrogram')}</div>`+(R?`<div class="grid">${chart('p_acc','Accuracy by algorithm')}${chart('p_prf','Precision / recall / F1 / specificity')}</div>`:noR)+card('Recommended action',recommend()):''),a:()=>{if(A){['time','fft','env','spec'].forEach(k=>plots[k]());if(R){plots.acc();plots.prf()}}}},
+ dataset:{t:'Dataset',h:()=>card('Reference training data','The displayed classes and benchmark scores summarize labelled reference bearing-vibration recordings. They are not a calibration guarantee for your machine, sensor, sampling rate, or operating conditions. Validate the model with representative labelled recordings before relying on its predictions.')+'<br>'+(R?`<div class="grid kpis">${kpi('Recordings',R.dataset.recordings)}${kpi('Windows',R.dataset.windows)}${Object.entries(R.dataset.windows_per_class).map(([k,v])=>kpi(k+' windows',v)).join('')}</div>${chart('p_dist','Class distribution (windows)')}`:'<div class="msg">Reference training results are not available.</div>'),a:()=>R&&pl('p_dist',[{x:Object.keys(R.dataset.windows_per_class),y:Object.values(R.dataset.windows_per_class),type:'bar',marker:{color:COL}}],{yaxis:{title:'Windows'}})},
+ upload:{t:'Upload Signal',h:()=>card('Data input','Choose a vibration file, set its actual sampling frequency and filter/window settings. Recordings from 64 samples upward are supported, and the window is automatically shortened to fit. For .mat files the drive-end channel (…_DE_time) is used when available. A model trained on reference signals may behave differently on other equipment.')+'<br>'+card('Settings',form())+(A?'<br>'+card('Loaded file',`<div class="scroll"><table>${Object.entries(A.file).map(([k,v])=>`<tr><td>${k}</td><td>${v??'n/a'}</td></tr>`).join('')}</table></div>`):''),a:bindForm},
+ preprocess:{t:'Preprocessing',h:()=>card('Parameters (re-run to apply)',form())+'<br>'+need()+(A?`<div class="grid">${chart('p_raw','Before preprocessing (raw)')}${chart('p_flt','After preprocessing (DC removed, detrended, band-passed)')}</div><p>Windows: ${A.params.windows} (size ${A.params.window}, overlap ${A.params.overlap}%). The uploaded signal is never modified.</p>`:''),a:()=>{bindForm();if(A){sigPlot('p_raw',A.t,A.raw,'Time (s)','Amplitude','#8a97a4');sigPlot('p_flt',A.t,A.filtered,'Time (s)','Amplitude')}}},
+ signal:{t:'Signal Analysis',h:()=>need()+(A?`<div class="scroll"><table><tr>${Object.keys(A.stats).map(k=>`<th>${k}</th>`).join('')}</tr><tr>${Object.values(A.stats).map(v=>`<td>${f(v,4)}</td>`).join('')}</tr></table></div><br><div class="grid">${chart('p_time','Raw vs filtered (zoom/pan enabled)')}${chart('p_fft','FFT spectrum')}${chart('p_env','Envelope spectrum')}${chart('p_spec','STFT / spectrogram')}</div>`:''),a:()=>A&&['time','fft','env','spec'].forEach(k=>plots[k]())},
+ features:{t:'Features',h:()=>need()+(A?card('Extracted features (mean over windows)',`<div class="scroll"><table><tr><th>Feature</th><th>Value</th></tr>${Object.entries(A.mean_features).map(([k,v])=>`<tr><td>${k}</td><td>${v.toPrecision(5)}</td></tr>`).join('')}</table></div>`)+'<br>'+chart('p_rms','RMS per window'):'')+(R?`<br>${card('Feature distribution by class (training data)',`<select id="fsel">${R.feature_names.map(n=>`<option>${n}`).join('')}</select><div id="p_box" class="ch"></div>`)}`:''),a:()=>{if(A)plots.rms();if(R){const d=()=>{const s=R.feature_class_stats[$('#fsel').value];pl('p_box',Object.entries(s).map(([k,v],i)=>({y:v,name:k,type:'box',marker:{color:COL[i]}})))};$('#fsel').onchange=d;d()}}},
+ featsel:{t:'Feature Selection',h:()=>R?`<div class="grid">${chart('p_rf','Random Forest importance','tall')}${chart('p_an','ANOVA F-score ranking','tall')}</div><div class="msg">Selection here is ranking-based (embedded RF + statistical filter). PCA and correlation filtering are not implemented in this build.</div>`:noR,a:()=>{if(!R)return;const bar=(id,o,c)=>{const e=Object.entries(o).sort((a,b)=>a[1]-b[1]);pl(id,[{y:e.map(x=>x[0]),x:e.map(x=>x[1]),type:'bar',orientation:'h',marker:{color:c}}],{margin:{l:130,t:10,r:10,b:40}})};bar('p_rf',R.rf_importance,'#1f5fbf');bar('p_an',R.anova_f,'#2e7d4f')}},
+ training:{t:'Model Training',h:()=>card('Split methodology (leakage-free)',R?`${R.split.method}.<br>Windows — train ${R.split.windows.train}, validation ${R.split.windows.val}, test ${R.split.windows.test}. Trained ${R.trained_at}.`:'No trained models yet. Each recording is assigned to only one split, so overlapping windows do not leak between training and evaluation.')+'<br>'+card('Train reference models',`<form id="tf"><div><label>Sampling freq (Hz)</label><input id="tfs" type="number" value="12000"></div><div><label>Admin training token (if configured)</label><input id="ttoken" type="password" autocomplete="off"></div><div><button>Start training</button></div></form><pre id="tlog">idle</pre><p class="note">Models train on labelled recordings stored on the backend. Uploaded diagnosis signals are processed for prediction and are not added to the training set. Results may differ on other sensors, machines, and operating conditions; validate with representative labelled data.</p>`),a:()=>{const poll=async()=>{const s=await api('/api/train/status');$('#tlog').textContent=s.log.join('\n')||s.state;if(s.state==='running')timer=setTimeout(poll,2000);else if(s.state==='done'){await loadR();say('Training finished. Real results loaded.','ok')}else if(s.state==='error')say('Training failed — see log.','err')};$('#tf').onsubmit=async e=>{e.preventDefault();const d=new FormData();d.append('fs',$('#tfs').value);d.append('token',$('#ttoken').value);try{await api('/api/train',{method:'POST',body:d});say('Training started…');poll()}catch(x){say(x.message,'err')}};poll()}},
+ compare:{t:'Model Comparison',h:()=>R?`<div class="grid kpis">${kpi('Best model (validation macro-F1)',R.best_model)}${kpi('Held-out test accuracy',f(R.models[R.best_model].accuracy))}${kpi('Held-out test F1',f(R.models[R.best_model].f1))}</div>${card('All algorithms (held-out test recordings)',metricTable())}<br><div class="grid">${card('Metric comparison',`<select id="msel">${['accuracy','precision','recall','f1','specificity','roc_auc','train_time','infer_time_per_window'].map(k=>`<option>${k}`).join('')}</select><div id="p_m" class="ch"></div>`)}${chart('p_prf','Precision / recall / F1 / specificity')}</div><div class="grid">${card('Confusion matrix',`<select id="csel">${Object.keys(R.models).map(k=>`<option>${k}`).join('')}</select><div id="p_cm" class="ch"></div>`)}${card('Per-class TP / FP / TN / FN','<div id="cmtab"></div>')}</div> <div class="msg">${R.evaluation_note} ${R.unavailable.length?`Models not trained: ${R.unavailable.join(', ')}.`:''} ROC / PR curves are not generated in this build.</div>`:noR,a:()=>{if(!R)return;const m=()=>metricBar('p_m',$('#msel').value);$('#msel').onchange=m;m();plots.prf();$('#csel').onchange=()=>cm($('#csel').value);cm($('#csel').value)}},
+ diagnosis:{t:'Diagnosis',h:()=>need()+(A?(A.pred.available?`<div class="grid">${card('Bearing condition',`${status()}<p>Condition: <b>${A.pred.condition}</b><br>Model: ${A.pred.model} (reference benchmark test accuracy ${f(A.pred.model_test_accuracy)})<br>Confidence: ${f(A.pred.confidence)}<br>Prediction time: ${f(A.pred.prediction_time_s,4)} s for ${A.params.windows} windows<br>Window votes: ${Object.entries(A.pred.window_votes).map(([k,v])=>k+' '+v).join(', ')}</p><p><b>${recommend()}</b></p><p class="note">${A.pred.evaluation_note}</p>`)}${chart('p_prob','Class probability (mean over windows)')}</div>`:`<div class="msg err">${A.pred.message}</div>`)+`<div class="grid">${chart('p_time','Signal')}${chart('p_fft','FFT')}${chart('p_env','Envelope spectrum')}</div>`:''),a:()=>{if(A){if(A.pred.available)plots.prob();['time','fft','env'].forEach(k=>plots[k]())}}},
+ reports:{t:'Reports',h:()=>card('Export report',`Opens a report with dataset info, signal info, preprocessing settings, features, model comparison, confusion matrix, best model and the latest diagnosis. Use your browser’s Print → Save as PDF.<br><br><a class="btn" href="${apiUrl('/api/report')}" target="_blank">Open report</a>`)},
+ method:{t:'Methodology',h:()=>card('Pipeline',flow())+'<br>'+card('Steps','1. Load labelled reference bearing-vibration recordings. 2. Remove DC offset and linear trend. 3. Butterworth band-pass filter. 4. Cut into overlapping windows. 5. Extract time-domain, spectral, envelope and wavelet-energy features for classical models; train 1D CNN, LSTM and CNN-LSTM directly on signal windows. 6. Rank classical features (RF importance, ANOVA). 7. Train SVM, KNN, Decision Tree, Random Forest, Naive Bayes, MLP, XGBoost, and sequence models. 8. Evaluate on unseen recordings, keeping recordings separate across splits. 9. The best model selected by validation macro-F1 diagnoses uploaded signals window by window. Benchmark performance may not transfer to different machines, sensors, or operating conditions; validate with representative labelled data. Healthy = Normal class; any other class = faulty.')},
+ about:{t:'About',h:()=>card('About this project','Bearing wear is a leading cause of motor failure; vibration analysis reveals fault signatures early, enabling predictive maintenance. Machine learning learns those signatures from labelled data. Supported classes: Normal, Inner Race, Outer Race, Ball.<br><br><b>Academic research prototype — bearing-fault diagnosis only, not a safety-certified industrial diagnostic system.</b>')}
+};
+const nav=[['home','Home'],['dash','Dashboard'],['dataset','Dataset'],['upload','Upload Signal'],['preprocess','Preprocessing'],['signal','Signal Analysis'],['features','Features'],['featsel','Feature Selection'],['training','Model Training'],['compare','Model Comparison'],['diagnosis','Diagnosis'],['reports','Reports'],['method','Methodology'],['about','About']];
+$('#nav').innerHTML+=nav.map(([k,t])=>`<a href="#${k}" data-k="${k}">${t}</a>`).join('');
+async function route(){clearTimeout(timer);const k=(location.hash||'#home').slice(1),p=pages[k]||pages.home;
+ document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('on',a.dataset.k===k));$('#crumb').textContent='Home / '+p.t;
+ await loadR();$('#view').innerHTML=p.h();p.a&&p.a()}
+addEventListener('hashchange',()=>{say('');route()});route();
+</script></body></html>

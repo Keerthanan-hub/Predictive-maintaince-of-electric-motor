@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+python-multipart
+numpy
+scipy
+pandas
+scikit-learn
+PyWavelets
+joblib
+xgboost
+torch>=2.5
