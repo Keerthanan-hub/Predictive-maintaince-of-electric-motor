@@ -110,6 +110,16 @@ const pages={
  method:{t:'Methodology',h:()=>card('Pipeline',flow())+'<br>'+card('Steps','1. Load labelled reference bearing-vibration recordings. 2. Remove DC offset and linear trend. 3. Butterworth band-pass filter. 4. Cut into overlapping windows. 5. Extract time-domain, spectral, envelope and wavelet-energy features for classical models; train 1D CNN, LSTM and CNN-LSTM directly on signal windows. 6. Rank classical features (RF importance, ANOVA). 7. Train SVM, KNN, Decision Tree, Random Forest, Naive Bayes, MLP, XGBoost, and sequence models. 8. Evaluate on unseen recordings, keeping recordings separate across splits. 9. The best model selected by validation macro-F1 diagnoses uploaded signals window by window. Benchmark performance may not transfer to different machines, sensors, or operating conditions; validate with representative labelled data. Healthy = Normal class; any other class = faulty.')},
  about:{t:'About',h:()=>card('About this project','Bearing wear is a leading cause of motor failure; vibration analysis reveals fault signatures early, enabling predictive maintenance. Machine learning learns those signatures from labelled data. Supported classes: Normal, Inner Race, Outer Race, Ball.<br><br><b>Academic research prototype — bearing-fault diagnosis only, not a safety-certified industrial diagnostic system.</b>')}
 };
+const trainingAction=pages.training.a;
+pages.training.a=()=>{
+ trainingAction();
+ api('/api/train/status').then(s=>{
+  if(s.state==='unavailable'){
+   $('#tf').hidden=true;
+   $('#tlog').textContent=s.log.join('\n');
+  }
+ }).catch(e=>say(e.message,'err'));
+};
 const nav=[['home','Home'],['dash','Dashboard'],['dataset','Dataset'],['upload','Upload Signal'],['preprocess','Preprocessing'],['signal','Signal Analysis'],['features','Features'],['featsel','Feature Selection'],['training','Model Training'],['compare','Model Comparison'],['diagnosis','Diagnosis'],['reports','Reports'],['method','Methodology'],['about','About']];
 $('#nav').innerHTML+=nav.map(([k,t])=>`<a href="#${k}" data-k="${k}">${t}</a>`).join('');
 async function route(){clearTimeout(timer);const k=(location.hash||'#home').slice(1),p=pages[k]||pages.home;

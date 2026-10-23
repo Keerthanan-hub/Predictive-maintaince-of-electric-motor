@@ -26,36 +26,16 @@ Signal analysis accepts recordings from 64 samples onward and reduces the
 analysis window to fit shorter files. Set the sampling frequency to match the
 uploaded signal.
 
-## Deploy: Vercel frontend + Render API
+## Deploy on Vercel
 
-The browser UI is a static site; model inference and training need a Python API.
-Deploy them separately:
+The Vercel deployment serves the frontend and FastAPI endpoints from one
+project. Import the repository in Vercel and set its **Root Directory** to the
+repository root (`./`), not `frontend`. `pyproject.toml` points Vercel to
+`backend.app:app`; `frontend/config.js` leaves the API base empty so the UI
+calls the same-origin API.
 
-1. Push this project to a GitHub repository. The `.gitignore` excludes the
-   virtual environment, local secrets, and the 140 MB reference-data directory;
-   it retains the trained model artifacts and benchmark metrics needed to serve
-   predictions.
-2. In Vercel, import that repository and set the **Root Directory** to
-   `frontend`. Vercel serves the static site from `frontend/vercel.json`.
-3. In Render, create a Blueprint from the repository root and apply
-   `render.yaml`. This creates a Python API service with a persistent disk for
-   model checkpoints, results, and training data. Persistent disks require a
-   paid Render web-service plan.
-4. Set `CORS_ORIGINS` on Render to the exact deployed Vercel origin (for
-   example, `https://your-project.vercel.app`) and redeploy the API.
-5. Set `window.BEARING_API_BASE` in `frontend/config.js` to the Render service
-   URL (for example, `https://bearing-monitor-api.onrender.com`), then push the
-   change to GitHub so Vercel redeploys.
-6. `TRAINING_TOKEN` is requested as a secret when creating the Render
-   Blueprint. Use that token in the Model Training page. To populate the
-   backend's persistent training-data directory, open the Render Shell and run:
-       python backend/download_reference_data.py --output /var/data/cwru
-   Alternatively, place your own labelled `.mat` recordings in class-named
-   subfolders under `/var/data/cwru` (`Normal`, `InnerRace`, `OuterRace`, `Ball`).
-   The training route reads backend-side labelled recordings; an individual
-   user's diagnosis upload is used for prediction and is not added to training.
-
-For local development, leave `window.BEARING_API_BASE` empty and run the API
-using the command above. Do not put the Render training token in frontend
-configuration, source control, or a Vercel environment variable exposed to
-browser code.
+Vercel runs the API as a serverless function. Signal analysis and predictions
+use the bundled models, but model training is disabled because background
+training jobs and persistent writes are not supported by this deployment.
+Training remains available when running the app locally. For local
+development, use the commands in Setup and Run above.

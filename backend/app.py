@@ -1,5 +1,5 @@
 """FastAPI backend. Run:  cd backend && uvicorn app:app --reload"""
-import hmac, io, json, os, threading, time, html
+import hmac, io, json, os, sys, threading, time, html
 from pathlib import Path
 import numpy as np, joblib
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
@@ -8,6 +8,8 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from scipy.io import loadmat
 from scipy import signal
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import dsp, train
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -111,6 +113,8 @@ def comparison(): return results() or {"models": {}}
 
 @app.post("/api/train")
 def start_training(fs: float = Form(12000), token: str = Form("")):
+    if os.environ.get("VERCEL"):
+        raise HTTPException(501, "Model training is unavailable on Vercel.")
     expected_token = os.environ.get("TRAINING_TOKEN")
     if expected_token and not hmac.compare_digest(token, expected_token):
         raise HTTPException(403, "Invalid training access token.")
@@ -125,7 +129,10 @@ def start_training(fs: float = Form(12000), token: str = Form("")):
     threading.Thread(target=job, daemon=True).start(); return {"started": True}
 
 @app.get("/api/train/status")
-def train_status(): return {"state": TRAIN["state"], "log": TRAIN["log"][-15:]}
+def train_status():
+    if os.environ.get("VERCEL"):
+        return {"state": "unavailable", "log": ["Model training is unavailable on Vercel."]}
+    return {"state": TRAIN["state"], "log": TRAIN["log"][-15:]}
 
 @app.get("/api/report", response_class=HTMLResponse)
 def report():
