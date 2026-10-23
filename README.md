@@ -32,7 +32,8 @@ The Vercel deployment serves the frontend and FastAPI endpoints from one
 project. Import the repository in Vercel and set its **Root Directory** to the
 repository root (`./`), not `frontend`. `pyproject.toml` points Vercel to
 `backend.app:app`; `frontend/config.js` leaves the API base empty so the UI
-calls the same-origin API.
+calls the same-origin API. After changing the root directory, redeploy the
+latest commit from Vercel or push a new commit.
 
 Vercel runs the API as a serverless function. Signal analysis and predictions
 use the bundled models, but model training is disabled because background
